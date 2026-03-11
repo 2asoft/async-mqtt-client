@@ -1,5 +1,6 @@
 #pragma once
 
+#include <array>
 #include <functional>
 #include <vector>
 
@@ -19,8 +20,11 @@
 #error Platform not supported
 #endif
 
-#if ASYNC_TCP_SSL_ENABLED
+#if ASYNC_TCP_SSL_ENABLED && !(defined(ESP8266) && ASYNC_TCP_SSL_BEARSSL)
 #include <tcp_axtls.h>
+#endif
+
+#if ASYNC_TCP_SSL_ENABLED
 #define SHA1_SIZE 20
 #endif
 
@@ -80,6 +84,7 @@ class AsyncMqttClient {
   AsyncMqttClient& onPublish(AsyncMqttClientInternals::OnPublishUserCallback callback);
 
   bool connected() const;
+  void loop();
   void connect();
   void disconnect(bool force = false);
   uint16_t subscribe(const char* topic, uint8_t qos);
@@ -150,7 +155,7 @@ class AsyncMqttClient {
   // TCP
   void _onConnect(AsyncClient* client);
   void _onDisconnect(AsyncClient* client);
-  static void _onError(AsyncClient* client, int8_t error);
+  void _onError(AsyncClient* client, int8_t error);
   void _onTimeout(AsyncClient* client, uint32_t time);
   static void _onAck(AsyncClient* client, size_t len, uint32_t time);
   void _onData(AsyncClient* client, uint8_t* data, size_t len);

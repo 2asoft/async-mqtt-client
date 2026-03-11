@@ -1,5 +1,24 @@
 #include "AsyncMqttClient.hpp"
 
+#include <memory>
+
+#if defined(ESP8266) && ASYNC_TCP_SSL_ENABLED && ASYNC_TCP_SSL_BEARSSL
+namespace {
+constexpr int MQTT_TLS_IN_BUF_SIZE = 4421;
+constexpr int MQTT_TLS_OUT_BUF_SIZE = 1349;
+
+SSL_CTX_PARAMS makeSslParams(const std::vector<std::array<uint8_t, SHA1_SIZE>>& fingerprints) {
+  SSL_CTX_PARAMS sslParams{};
+  sslParams.use_insecure = true;
+  sslParams.use_fingerprint = true;
+  sslParams.iobuf_in_size = MQTT_TLS_IN_BUF_SIZE;
+  sslParams.iobuf_out_size = MQTT_TLS_OUT_BUF_SIZE;
+  memcpy(sslParams.fingerprint, fingerprints.front().data(), SHA1_SIZE);
+  return sslParams;
+}
+}
+#endif
+
 AsyncMqttClient::AsyncMqttClient()
 : _connected(false)
 , _connectPacketNotEnoughSpace(false)
@@ -180,7 +199,7 @@ void AsyncMqttClient::_clear() {
 void AsyncMqttClient::_onConnect(AsyncClient* client) {
   (void)client;
 
-#if ASYNC_TCP_SSL_ENABLED
+#if ASYNC_TCP_SSL_ENABLED && !(defined(ESP8266) && ASYNC_TCP_SSL_BEARSSL)
   if (_secure && _secureServerFingerprints.size() > 0) {
     SSL* clientSsl = _client.getSSL();
 
@@ -324,7 +343,7 @@ void AsyncMqttClient::_onConnect(AsyncClient* client) {
   sendbuffer[3] = 'Q';
   sendbuffer[4] = 'T';
   sendbuffer[5] = 'T';
-  
+
   sendbuffer[6] = protocolLevel[0];
   sendbuffer[7] = connectFlags[0];
   sendbuffer[8] = keepAliveBytes[0];
@@ -374,7 +393,13 @@ void AsyncMqttClient::_onDisconnect(AsyncClient* client) {
 
 void AsyncMqttClient::_onError(AsyncClient* client, int8_t error) {
   (void)client;
+#if defined(ESP8266) && ASYNC_TCP_SSL_ENABLED && ASYNC_TCP_SSL_BEARSSL
+  if (_secure && !_secureServerFingerprints.empty() && error == -56) {
+    _tlsBadFingerprint = true;
+  }
+#else
   (void)error;
+#endif
   // _onDisconnect called anyway
 }
 
@@ -618,6 +643,12 @@ void AsyncMqttClient::_onPubComp(uint16_t packetId) {
   for (auto callback : _onPublishUserCallbacks) callback(packetId);
 }
 
+void AsyncMqttClient::loop() {
+  _client.send();
+  _onPoll(&_client);
+  _client.send();
+}
+
 bool AsyncMqttClient::_sendPing() {
   char fixedHeader[2];
   fixedHeader[0] = AsyncMqttClientInternals::PacketType.PINGREQ;
@@ -710,6 +741,13 @@ bool AsyncMqttClient::connected() const {
 
 void AsyncMqttClient::connect() {
   if (_connected) return;
+
+#if defined(ESP8266) && ASYNC_TCP_SSL_ENABLED && ASYNC_TCP_SSL_BEARSSL
+  if (_secure && !_secureServerFingerprints.empty()) {
+    SSL_CTX_PARAMS sslParams = makeSslParams(_secureServerFingerprints);
+    _client.setSSLParams(sslParams);
+  }
+#endif
 
 #if ASYNC_TCP_SSL_ENABLED
   if (_useIp) {
@@ -877,11 +915,24 @@ uint16_t AsyncMqttClient::publish(const char* topic, uint8_t qos, bool retain, c
     packetIdBytes[1] = packetId & 0xFF;
   }
 
-  _client.add(fixedHeader, 1 + remainingLengthLength);
-  _client.add(topicLengthBytes, 2);
-  _client.add(topic, topicLength);
-  if (qos != 0) _client.add(packetIdBytes, 2);
-  if (payload != nullptr) _client.add(payload, payloadLength);
+  std::unique_ptr<char[]> packet{new char[neededSpace]};
+  size_t pos = 0;
+  memcpy(packet.get() + pos, fixedHeader, 1 + remainingLengthLength);
+  pos += 1 + remainingLengthLength;
+  memcpy(packet.get() + pos, topicLengthBytes, 2);
+  pos += 2;
+  memcpy(packet.get() + pos, topic, topicLength);
+  pos += topicLength;
+  if (qos != 0) {
+    memcpy(packet.get() + pos, packetIdBytes, 2);
+    pos += 2;
+  }
+  if (payload != nullptr) {
+    memcpy(packet.get() + pos, payload, payloadLength);
+    pos += payloadLength;
+  }
+
+  _client.add(packet.get(), pos);
   _client.send();
   _lastClientActivity = millis();
 
