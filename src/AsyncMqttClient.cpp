@@ -7,13 +7,16 @@ namespace {
 constexpr int MQTT_TLS_IN_BUF_SIZE = 4421;
 constexpr int MQTT_TLS_OUT_BUF_SIZE = 1349;
 
-SSL_CTX_PARAMS makeSslParams(const std::vector<std::array<uint8_t, SHA1_SIZE>>& fingerprints) {
+SSL_CTX_PARAMS makeSslParams(const std::vector<std::array<uint8_t, SHA1_SIZE>>& fingerprints, const char* caCert) {
   SSL_CTX_PARAMS sslParams{};
-  sslParams.use_insecure = true;
-  sslParams.use_fingerprint = true;
+  sslParams.use_insecure = caCert == nullptr;
+  sslParams.use_fingerprint = !fingerprints.empty();
+  sslParams.ca_cert = caCert;
   sslParams.iobuf_in_size = MQTT_TLS_IN_BUF_SIZE;
   sslParams.iobuf_out_size = MQTT_TLS_OUT_BUF_SIZE;
-  memcpy(sslParams.fingerprint, fingerprints.front().data(), SHA1_SIZE);
+  if (!fingerprints.empty()) {
+    memcpy(sslParams.fingerprint, fingerprints.front().data(), SHA1_SIZE);
+  }
   return sslParams;
 }
 }
@@ -33,6 +36,9 @@ AsyncMqttClient::AsyncMqttClient()
 , _secure(false)
 #endif
 , _port(0)
+#if ASYNC_TCP_SSL_ENABLED && defined(ESP8266) && ASYNC_TCP_SSL_BEARSSL
+, _caCert(nullptr)
+#endif
 , _keepAlive(15)
 , _cleanSession(true)
 , _clientId(nullptr)
@@ -140,6 +146,13 @@ AsyncMqttClient& AsyncMqttClient::addServerFingerprint(const uint8_t* fingerprin
   _secureServerFingerprints.push_back(newFingerprint);
   return *this;
 }
+
+#if defined(ESP8266) && ASYNC_TCP_SSL_BEARSSL
+AsyncMqttClient& AsyncMqttClient::setCACert(const char* caCert) {
+  _caCert = caCert;
+  return *this;
+}
+#endif
 #endif
 
 AsyncMqttClient& AsyncMqttClient::onConnect(AsyncMqttClientInternals::OnConnectUserCallback callback) {
@@ -743,8 +756,8 @@ void AsyncMqttClient::connect() {
   if (_connected) return;
 
 #if defined(ESP8266) && ASYNC_TCP_SSL_ENABLED && ASYNC_TCP_SSL_BEARSSL
-  if (_secure && !_secureServerFingerprints.empty()) {
-    SSL_CTX_PARAMS sslParams = makeSslParams(_secureServerFingerprints);
+  if (_secure && (!_secureServerFingerprints.empty() || _caCert != nullptr)) {
+    SSL_CTX_PARAMS sslParams = makeSslParams(_secureServerFingerprints, _caCert);
     _client.setSSLParams(sslParams);
   }
 #endif

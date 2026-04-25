@@ -74,6 +74,9 @@ class AsyncMqttClient {
 #if ASYNC_TCP_SSL_ENABLED
   AsyncMqttClient& setSecure(bool secure);
   AsyncMqttClient& addServerFingerprint(const uint8_t* fingerprint);
+#if defined(ESP8266) && ASYNC_TCP_SSL_BEARSSL
+  AsyncMqttClient& setCACert(const char* caCert);
+#endif
 #endif
 
   AsyncMqttClient& onConnect(AsyncMqttClientInternals::OnConnectUserCallback callback);
@@ -112,6 +115,9 @@ class AsyncMqttClient {
   bool _secure;
 #endif
   uint16_t _port;
+#if ASYNC_TCP_SSL_ENABLED && defined(ESP8266) && ASYNC_TCP_SSL_BEARSSL
+  const char* _caCert;
+#endif
   uint16_t _keepAlive;
   bool _cleanSession;
   const char* _clientId;
