@@ -1,0 +1,52 @@
+---
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  platformio:
+    name: PlatformIO Build (${{ matrix.name }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: ESP8266
+            board: esp12e
+            example: examples/FullyFeatured-ESP8266
+          - name: ESP32
+            board: esp32dev
+            example: examples/FullyFeatured-ESP32
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Set up Python
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: "3.12"
+
+      - name: Cache PlatformIO
+        uses: actions/cache@cdf6c1fa76f9f475f3d7449005a359c84ca0f306 # v5.0.3
+        with:
+          path: ~/.platformio
+          key: pio-${{ runner.os }}-${{ matrix.name }}-${{ hashFiles('library.json', '.github/workflows/ci.yml') }}
+          restore-keys: |
+            pio-${{ runner.os }}-${{ matrix.name }}-
+            pio-${{ runner.os }}-
+
+      - name: Install PlatformIO
+        run: pip install platformio
+
+      - name: Validate PlatformIO package metadata
+        run: pio package pack --output /tmp
+
+      - name: Build ${{ matrix.name }} example
+        run: python -m platformio ci -l . --board ${{ matrix.board }} ${{ matrix.example }}
