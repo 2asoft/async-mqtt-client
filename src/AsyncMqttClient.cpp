@@ -3,17 +3,20 @@
 #include <memory>
 
 #if defined(ESP8266) && ASYNC_TCP_SSL_ENABLED && ASYNC_TCP_SSL_BEARSSL
+#include <bearssl/bearssl_x509.h>
+
 namespace {
 constexpr int MQTT_TLS_IN_BUF_SIZE = 4421;
 constexpr int MQTT_TLS_OUT_BUF_SIZE = 1349;
 
-SSL_CTX_PARAMS makeSslParams(const std::vector<std::array<uint8_t, SHA1_SIZE>>& fingerprints) {
+// Without pins any server certificate is accepted, as with axTLS
+SSL_CTX_PARAMS makeSslParams(const uint8_t* fingerprint) {
   SSL_CTX_PARAMS sslParams{};
   sslParams.use_insecure = true;
-  sslParams.use_fingerprint = true;
+  sslParams.use_fingerprint = fingerprint != nullptr;
   sslParams.iobuf_in_size = MQTT_TLS_IN_BUF_SIZE;
   sslParams.iobuf_out_size = MQTT_TLS_OUT_BUF_SIZE;
-  memcpy(sslParams.fingerprint, fingerprints.front().data(), SHA1_SIZE);
+  if (fingerprint != nullptr) memcpy(sslParams.fingerprint, fingerprint, SHA1_SIZE);
   return sslParams;
 }
 }
@@ -394,8 +397,10 @@ void AsyncMqttClient::_onDisconnect(AsyncClient* client) {
 void AsyncMqttClient::_onError(AsyncClient* client, int8_t error) {
   (void)client;
 #if defined(ESP8266) && ASYNC_TCP_SSL_ENABLED && ASYNC_TCP_SSL_BEARSSL
-  if (_secure && !_secureServerFingerprints.empty() && error == -56) {
+  // The pin verifier rejects a certificate with BR_ERR_X509_NOT_TRUSTED
+  if (_secure && !_secureServerFingerprints.empty() && error == BR_ERR_X509_NOT_TRUSTED) {
     _tlsBadFingerprint = true;
+    _fingerprintIndex = (_fingerprintIndex + 1) % _secureServerFingerprints.size();
   }
 #else
   (void)error;
@@ -743,8 +748,13 @@ void AsyncMqttClient::connect() {
   if (_connected) return;
 
 #if defined(ESP8266) && ASYNC_TCP_SSL_ENABLED && ASYNC_TCP_SSL_BEARSSL
-  if (_secure && !_secureServerFingerprints.empty()) {
-    SSL_CTX_PARAMS sslParams = makeSslParams(_secureServerFingerprints);
+  if (_secure) {
+    const uint8_t* fingerprint = nullptr;
+    if (!_secureServerFingerprints.empty()) {
+      if (_fingerprintIndex >= _secureServerFingerprints.size()) _fingerprintIndex = 0;
+      fingerprint = _secureServerFingerprints[_fingerprintIndex].data();
+    }
+    SSL_CTX_PARAMS sslParams = makeSslParams(fingerprint);
     _client.setSSLParams(sslParams);
   }
 #endif
@@ -932,7 +942,12 @@ uint16_t AsyncMqttClient::publish(const char* topic, uint8_t qos, bool retain, c
     pos += payloadLength;
   }
 
+#if defined(ESP8266)
+  // The ESP8266 transport keeps a reference to the data unless asked to copy it
+  _client.add(packet.get(), pos, ASYNC_WRITE_FLAG_COPY);
+#else
   _client.add(packet.get(), pos);
+#endif
   _client.send();
   _lastClientActivity = millis();
 

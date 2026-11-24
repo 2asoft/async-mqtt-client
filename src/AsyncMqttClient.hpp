@@ -126,6 +126,10 @@ class AsyncMqttClient {
 #if ASYNC_TCP_SSL_ENABLED
   std::vector<std::array<uint8_t, SHA1_SIZE>> _secureServerFingerprints;
 #endif
+#if defined(ESP8266) && ASYNC_TCP_SSL_ENABLED && ASYNC_TCP_SSL_BEARSSL
+  // BearSSL checks one pin per handshake; a rejected pin moves on to the next one
+  size_t _fingerprintIndex = 0;
+#endif
 
   std::vector<AsyncMqttClientInternals::OnConnectUserCallback> _onConnectUserCallbacks;
   std::vector<AsyncMqttClientInternals::OnDisconnectUserCallback> _onDisconnectUserCallbacks;
