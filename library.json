@@ -19,7 +19,7 @@
     {
       "owner": "esphome",
       "name": "ESP8266AsyncTCP",
-      "version": "^2.1.2",
+      "version": "^2.2.0",
       "platforms": "espressif8266"
     },
     {

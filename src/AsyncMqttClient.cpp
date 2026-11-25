@@ -978,12 +978,7 @@ uint16_t AsyncMqttClient::publish(const char* topic, uint8_t qos, bool retain, c
   if (qos != 0) added += add(packetIdBytes, 2);
   if (payload != nullptr) added += add(payload, payloadLength);
 #if defined(ESP8266)
-  bool shortAdd = added != neededSpace;
-#if ASYNC_TCP_SSL_ENABLED
-  // Before ESP8266AsyncTCP's multi-record writes a TLS add() does not report plaintext bytes
-  shortAdd = shortAdd && !_secure;
-#endif
-  if (shortAdd) {
+  if (added != neededSpace) {
     // A partly queued packet corrupts the stream: stop writing and close
     // from the next poll, as this may run inside a message callback
     if (added != 0) {
