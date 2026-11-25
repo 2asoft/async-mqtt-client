@@ -1,6 +1,7 @@
 #include "AsyncMqttClient.hpp"
 
 #include <memory>
+#include <new>
 
 #if defined(ESP8266) && ASYNC_TCP_SSL_ENABLED && ASYNC_TCP_SSL_BEARSSL
 #include <bearssl/bearssl_x509.h>
@@ -649,9 +650,12 @@ void AsyncMqttClient::_onPubComp(uint16_t packetId) {
 }
 
 void AsyncMqttClient::loop() {
+#if defined(ESP8266)
+  // Other transports run callbacks on their own task; polling from here would race them
   _client.send();
   _onPoll(&_client);
   _client.send();
+#endif
 }
 
 bool AsyncMqttClient::_sendPing() {
@@ -925,7 +929,10 @@ uint16_t AsyncMqttClient::publish(const char* topic, uint8_t qos, bool retain, c
     packetIdBytes[1] = packetId & 0xFF;
   }
 
-  std::unique_ptr<char[]> packet{new char[neededSpace]};
+#if defined(ESP8266)
+  // One buffer, so a TLS connection sends the packet as one record
+  std::unique_ptr<char[]> packet{new (std::nothrow) char[neededSpace]};
+  if (!packet) { SEMAPHORE_GIVE(); return 0; }
   size_t pos = 0;
   memcpy(packet.get() + pos, fixedHeader, 1 + remainingLengthLength);
   pos += 1 + remainingLengthLength;
@@ -941,12 +948,14 @@ uint16_t AsyncMqttClient::publish(const char* topic, uint8_t qos, bool retain, c
     memcpy(packet.get() + pos, payload, payloadLength);
     pos += payloadLength;
   }
-
-#if defined(ESP8266)
   // The ESP8266 transport keeps a reference to the data unless asked to copy it
   _client.add(packet.get(), pos, ASYNC_WRITE_FLAG_COPY);
 #else
-  _client.add(packet.get(), pos);
+  _client.add(fixedHeader, 1 + remainingLengthLength);
+  _client.add(topicLengthBytes, 2);
+  _client.add(topic, topicLength);
+  if (qos != 0) _client.add(packetIdBytes, 2);
+  if (payload != nullptr) _client.add(payload, payloadLength);
 #endif
   _client.send();
   _lastClientActivity = millis();
