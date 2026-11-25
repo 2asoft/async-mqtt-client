@@ -652,9 +652,11 @@ void AsyncMqttClient::_onPubComp(uint16_t packetId) {
 void AsyncMqttClient::loop() {
 #if defined(ESP8266)
   // Other transports run callbacks on their own task; polling from here would race them
+  if (!_client.connected()) return;
   _client.send();
   _onPoll(&_client);
-  _client.send();
+  // _onPoll can close the connection
+  if (_client.connected()) _client.send();
 #endif
 }
 
