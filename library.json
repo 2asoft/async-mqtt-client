@@ -18,8 +18,8 @@
   "dependencies": [
     {
       "owner": "esphome",
-      "name": "ESPAsyncTCP",
-      "version": "2.1.0",
+      "name": "ESP8266AsyncTCP",
+      "version": "^2.1.2",
       "platforms": "espressif8266"
     },
     {
