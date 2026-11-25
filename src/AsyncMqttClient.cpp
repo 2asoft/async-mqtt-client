@@ -682,6 +682,8 @@ bool AsyncMqttClient::_sendPing() {
 }
 
 void AsyncMqttClient::_sendAcks() {
+  // Nothing more goes out once a partial publish has stopped writes
+  if (!_connected) return;
   uint8_t neededAckSpace = 2 + 2;
 
   SEMAPHORE_TAKE();
