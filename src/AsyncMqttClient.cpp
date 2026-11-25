@@ -698,6 +698,8 @@ bool AsyncMqttClient::_sendPing() {
 
   _client.add(fixedHeader, 2);
   _client.send();
+  // A failed TLS write already tore the connection down and cleared the ping state
+  if (!_connected) { SEMAPHORE_GIVE(); return false; }
   _lastClientActivity = millis();
   _lastPingRequestTime = millis();
 
