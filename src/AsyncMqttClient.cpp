@@ -430,8 +430,9 @@ void AsyncMqttClient::_onAck(AsyncClient* client, size_t len, uint32_t time) {
 void AsyncMqttClient::_onData(AsyncClient* client, uint8_t* data, size_t len) {
   size_t currentBytePosition = 0;
 #if defined(ESP8266)
-  // The transport hands over the rest of a received chain even after a callback closed it
-  if (!client->connected()) return;
+  // The transport hands over the rest of a received chain even after a callback closed it;
+  // not connected(), which is false in CLOSE_WAIT while the broker's last bytes arrive
+  if (client->disconnected()) return;
   _parsing = true;
 #else
   (void)client;
@@ -974,11 +975,20 @@ uint16_t AsyncMqttClient::publish(const char* topic, uint8_t qos, bool retain, c
 #else
   auto add = [this](const char* data, size_t len) { return _client.add(data, len); };
 #endif
-  size_t added = add(fixedHeader, 1 + remainingLengthLength);
-  added += add(topicLengthBytes, 2);
-  added += add(topic, topicLength);
-  if (qos != 0) added += add(packetIdBytes, 2);
-  if (payload != nullptr) added += add(payload, payloadLength);
+  // Stop at the first short write so no field is queued without the ones before it
+  size_t added = 0;
+  bool complete = true;
+  auto put = [&](const char* data, size_t len) {
+    if (!complete) return;
+    size_t taken = add(data, len);
+    added += taken;
+    complete = taken == len;
+  };
+  put(fixedHeader, 1 + remainingLengthLength);
+  put(topicLengthBytes, 2);
+  put(topic, topicLength);
+  if (qos != 0) put(packetIdBytes, 2);
+  if (payload != nullptr) put(payload, payloadLength);
 #if defined(ESP8266)
   if (added != neededSpace) {
     // A partly queued packet corrupts the stream: stop writing and close
