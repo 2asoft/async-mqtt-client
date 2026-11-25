@@ -965,8 +965,12 @@ uint16_t AsyncMqttClient::publish(const char* topic, uint8_t qos, bool retain, c
     if (payload != nullptr) added += add(payload, payloadLength);
 #if defined(ESP8266)
     if (added != neededSpace) {
-      // A partly queued packet would corrupt the stream
-      if (added != 0) _client.close(true);
+      // A partly queued packet corrupts the stream: stop writing and close
+      // from the next poll, as this may run inside a message callback
+      if (added != 0) {
+        _connected = false;
+        _client.close();
+      }
       SEMAPHORE_GIVE();
       return 0;
     }
