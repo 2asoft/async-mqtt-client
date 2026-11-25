@@ -430,6 +430,8 @@ void AsyncMqttClient::_onAck(AsyncClient* client, size_t len, uint32_t time) {
 void AsyncMqttClient::_onData(AsyncClient* client, uint8_t* data, size_t len) {
   size_t currentBytePosition = 0;
 #if defined(ESP8266)
+  // The transport hands over the rest of a received chain even after a callback closed it
+  if (!client->connected()) return;
   _parsing = true;
 #else
   (void)client;
@@ -981,7 +983,8 @@ uint16_t AsyncMqttClient::publish(const char* topic, uint8_t qos, bool retain, c
   if (added != neededSpace) {
     // A partly queued packet corrupts the stream: stop writing and close
     // from the next poll, as this may run inside a message callback
-    if (added != 0) {
+    // A write that tore the connection down already ran _onDisconnect()
+    if (added != 0 && _client.connected()) {
       _disconnecting = true;
       _client.close();
     }
