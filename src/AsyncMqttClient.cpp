@@ -376,11 +376,14 @@ void AsyncMqttClient::_onConnect(AsyncClient* client) {
 }
 
 void AsyncMqttClient::_onDisconnect(AsyncClient* client) {
-  // A callback run while parsing closed the transport; finish after parsing unwinds
+#if defined(ESP8266)
+  // A callback run while parsing closed the transport; finish after parsing unwinds.
+  // ESP8266 only: elsewhere the transport runs its callbacks on another task.
   if (_parsing) {
     _disconnectDeferred = true;
     return;
   }
+#endif
   (void)client;
   AsyncMqttClientDisconnectReason reason;
 
@@ -425,7 +428,11 @@ void AsyncMqttClient::_onAck(AsyncClient* client, size_t len, uint32_t time) {
 
 void AsyncMqttClient::_onData(AsyncClient* client, uint8_t* data, size_t len) {
   size_t currentBytePosition = 0;
+#if defined(ESP8266)
   _parsing = true;
+#else
+  (void)client;
+#endif
   uint8_t currentByte;
   do {
     switch (_parsingInformation.bufferState) {
@@ -491,12 +498,16 @@ void AsyncMqttClient::_onData(AsyncClient* client, uint8_t* data, size_t len) {
       default:
         currentBytePosition = len;
     }
+#if defined(ESP8266)
   } while (currentBytePosition != len && !_disconnectDeferred);
   _parsing = false;
   if (_disconnectDeferred) {
     _disconnectDeferred = false;
     _onDisconnect(client);
   }
+#else
+  } while (currentBytePosition != len);
+#endif
 }
 
 void AsyncMqttClient::_onPoll(AsyncClient* client) {

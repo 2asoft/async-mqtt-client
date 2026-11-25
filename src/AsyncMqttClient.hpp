@@ -100,8 +100,11 @@ class AsyncMqttClient {
   bool _connectPacketNotEnoughSpace;
   bool _disconnectOnPoll;
   bool _tlsBadFingerprint;
+#if defined(ESP8266)
+  // Disconnect deferred while _onData() parses
   bool _parsing = false;
   bool _disconnectDeferred = false;
+#endif
   uint32_t _lastClientActivity;
   uint32_t _lastServerActivity;
   uint32_t _lastPingRequestTime;
