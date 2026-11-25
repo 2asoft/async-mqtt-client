@@ -100,6 +100,8 @@ class AsyncMqttClient {
   bool _connectPacketNotEnoughSpace;
   bool _disconnectOnPoll;
   bool _tlsBadFingerprint;
+  bool _parsing = false;
+  bool _disconnectDeferred = false;
   uint32_t _lastClientActivity;
   uint32_t _lastServerActivity;
   uint32_t _lastPingRequestTime;

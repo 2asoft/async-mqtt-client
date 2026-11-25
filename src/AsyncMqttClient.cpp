@@ -1,8 +1,5 @@
 #include "AsyncMqttClient.hpp"
 
-#include <memory>
-#include <new>
-
 #if defined(ESP8266) && ASYNC_TCP_SSL_ENABLED && ASYNC_TCP_SSL_BEARSSL
 #include <bearssl/bearssl_x509.h>
 
@@ -379,6 +376,11 @@ void AsyncMqttClient::_onConnect(AsyncClient* client) {
 }
 
 void AsyncMqttClient::_onDisconnect(AsyncClient* client) {
+  // A callback run while parsing closed the transport; finish after parsing unwinds
+  if (_parsing) {
+    _disconnectDeferred = true;
+    return;
+  }
   (void)client;
   AsyncMqttClientDisconnectReason reason;
 
@@ -422,8 +424,8 @@ void AsyncMqttClient::_onAck(AsyncClient* client, size_t len, uint32_t time) {
 }
 
 void AsyncMqttClient::_onData(AsyncClient* client, uint8_t* data, size_t len) {
-  (void)client;
   size_t currentBytePosition = 0;
+  _parsing = true;
   uint8_t currentByte;
   do {
     switch (_parsingInformation.bufferState) {
@@ -489,7 +491,12 @@ void AsyncMqttClient::_onData(AsyncClient* client, uint8_t* data, size_t len) {
       default:
         currentBytePosition = len;
     }
-  } while (currentBytePosition != len);
+  } while (currentBytePosition != len && !_disconnectDeferred);
+  _parsing = false;
+  if (_disconnectDeferred) {
+    _disconnectDeferred = false;
+    _onDisconnect(client);
+  }
 }
 
 void AsyncMqttClient::_onPoll(AsyncClient* client) {
@@ -933,53 +940,37 @@ uint16_t AsyncMqttClient::publish(const char* topic, uint8_t qos, bool retain, c
     packetIdBytes[1] = packetId & 0xFF;
   }
 
-#if defined(ESP8266) && ASYNC_TCP_SSL_ENABLED
-  if (_secure) {
-    // One buffer, so TLS sends the packet as one record
-    std::unique_ptr<char[]> packet{new (std::nothrow) char[neededSpace]};
-    if (!packet) { SEMAPHORE_GIVE(); return 0; }
-    size_t pos = 0;
-    memcpy(packet.get() + pos, fixedHeader, 1 + remainingLengthLength);
-    pos += 1 + remainingLengthLength;
-    memcpy(packet.get() + pos, topicLengthBytes, 2);
-    pos += 2;
-    memcpy(packet.get() + pos, topic, topicLength);
-    pos += topicLength;
-    if (qos != 0) {
-      memcpy(packet.get() + pos, packetIdBytes, 2);
-      pos += 2;
-    }
-    if (payload != nullptr) memcpy(packet.get() + pos, payload, payloadLength);
-    _client.add(packet.get(), neededSpace);
-  } else
-#endif
-  {
+  // The fields share one TLS record: the transport only seals a record when it is full or on send()
 #if defined(ESP8266)
-    // The ESP8266 transport keeps a reference to the data unless asked to copy it
-    auto add = [this](const char* data, size_t len) { return _client.add(data, len, ASYNC_WRITE_FLAG_COPY); };
+  // The ESP8266 transport keeps a reference to the data unless asked to copy it
+  auto add = [this](const char* data, size_t len) { return _client.add(data, len, ASYNC_WRITE_FLAG_COPY); };
 #else
-    auto add = [this](const char* data, size_t len) { return _client.add(data, len); };
+  auto add = [this](const char* data, size_t len) { return _client.add(data, len); };
 #endif
-    size_t added = add(fixedHeader, 1 + remainingLengthLength);
-    added += add(topicLengthBytes, 2);
-    added += add(topic, topicLength);
-    if (qos != 0) added += add(packetIdBytes, 2);
-    if (payload != nullptr) added += add(payload, payloadLength);
+  size_t added = add(fixedHeader, 1 + remainingLengthLength);
+  added += add(topicLengthBytes, 2);
+  added += add(topic, topicLength);
+  if (qos != 0) added += add(packetIdBytes, 2);
+  if (payload != nullptr) added += add(payload, payloadLength);
 #if defined(ESP8266)
-    if (added != neededSpace) {
-      // A partly queued packet corrupts the stream: stop writing and close
-      // from the next poll, as this may run inside a message callback
-      if (added != 0) {
-        _connected = false;
-        _client.close();
-      }
-      SEMAPHORE_GIVE();
-      return 0;
-    }
-#else
-    (void)added;
+  bool shortAdd = added != neededSpace;
+#if ASYNC_TCP_SSL_ENABLED
+  // Before ESP8266AsyncTCP's multi-record writes a TLS add() does not report plaintext bytes
+  shortAdd = shortAdd && !_secure;
 #endif
+  if (shortAdd) {
+    // A partly queued packet corrupts the stream: stop writing and close
+    // from the next poll, as this may run inside a message callback
+    if (added != 0) {
+      _connected = false;
+      _client.close();
+    }
+    SEMAPHORE_GIVE();
+    return 0;
   }
+#else
+  (void)added;
+#endif
   _client.send();
   _lastClientActivity = millis();
 
