@@ -751,7 +751,14 @@ bool AsyncMqttClient::_sendDisconnect() {
 
   _client.add(fixedHeader, 2);
   _client.send();
+#if defined(ESP8266)
+  // Graceful: the transport sends TLS records still buffered before it closes;
+  // nothing more goes out after DISCONNECT
+  _connected = false;
+  _client.close(false);
+#else
   _client.close(true);
+#endif
 
   _disconnectOnPoll = false;
 
@@ -808,8 +815,8 @@ void AsyncMqttClient::disconnect(bool force) {
   if (force) {
     _client.close(true);
   } else {
-    _sendDisconnect();
-    _disconnectOnPoll = false;
+    // No room for DISCONNECT yet (e.g. right after a large publish): retry from poll
+    _disconnectOnPoll = !_sendDisconnect();
   }
 }
 
