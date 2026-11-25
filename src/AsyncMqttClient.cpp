@@ -931,34 +931,49 @@ uint16_t AsyncMqttClient::publish(const char* topic, uint8_t qos, bool retain, c
     packetIdBytes[1] = packetId & 0xFF;
   }
 
-#if defined(ESP8266)
-  // One buffer, so a TLS connection sends the packet as one record
-  std::unique_ptr<char[]> packet{new (std::nothrow) char[neededSpace]};
-  if (!packet) { SEMAPHORE_GIVE(); return 0; }
-  size_t pos = 0;
-  memcpy(packet.get() + pos, fixedHeader, 1 + remainingLengthLength);
-  pos += 1 + remainingLengthLength;
-  memcpy(packet.get() + pos, topicLengthBytes, 2);
-  pos += 2;
-  memcpy(packet.get() + pos, topic, topicLength);
-  pos += topicLength;
-  if (qos != 0) {
-    memcpy(packet.get() + pos, packetIdBytes, 2);
+#if defined(ESP8266) && ASYNC_TCP_SSL_ENABLED
+  if (_secure) {
+    // One buffer, so TLS sends the packet as one record
+    std::unique_ptr<char[]> packet{new (std::nothrow) char[neededSpace]};
+    if (!packet) { SEMAPHORE_GIVE(); return 0; }
+    size_t pos = 0;
+    memcpy(packet.get() + pos, fixedHeader, 1 + remainingLengthLength);
+    pos += 1 + remainingLengthLength;
+    memcpy(packet.get() + pos, topicLengthBytes, 2);
     pos += 2;
-  }
-  if (payload != nullptr) {
-    memcpy(packet.get() + pos, payload, payloadLength);
-    pos += payloadLength;
-  }
-  // The ESP8266 transport keeps a reference to the data unless asked to copy it
-  _client.add(packet.get(), pos, ASYNC_WRITE_FLAG_COPY);
-#else
-  _client.add(fixedHeader, 1 + remainingLengthLength);
-  _client.add(topicLengthBytes, 2);
-  _client.add(topic, topicLength);
-  if (qos != 0) _client.add(packetIdBytes, 2);
-  if (payload != nullptr) _client.add(payload, payloadLength);
+    memcpy(packet.get() + pos, topic, topicLength);
+    pos += topicLength;
+    if (qos != 0) {
+      memcpy(packet.get() + pos, packetIdBytes, 2);
+      pos += 2;
+    }
+    if (payload != nullptr) memcpy(packet.get() + pos, payload, payloadLength);
+    _client.add(packet.get(), neededSpace);
+  } else
 #endif
+  {
+#if defined(ESP8266)
+    // The ESP8266 transport keeps a reference to the data unless asked to copy it
+    auto add = [this](const char* data, size_t len) { return _client.add(data, len, ASYNC_WRITE_FLAG_COPY); };
+#else
+    auto add = [this](const char* data, size_t len) { return _client.add(data, len); };
+#endif
+    size_t added = add(fixedHeader, 1 + remainingLengthLength);
+    added += add(topicLengthBytes, 2);
+    added += add(topic, topicLength);
+    if (qos != 0) added += add(packetIdBytes, 2);
+    if (payload != nullptr) added += add(payload, payloadLength);
+#if defined(ESP8266)
+    if (added != neededSpace) {
+      // A partly queued packet would corrupt the stream
+      if (added != 0) _client.close(true);
+      SEMAPHORE_GIVE();
+      return 0;
+    }
+#else
+    (void)added;
+#endif
+  }
   _client.send();
   _lastClientActivity = millis();
 
