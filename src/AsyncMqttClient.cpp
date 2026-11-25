@@ -669,9 +669,11 @@ void AsyncMqttClient::_onPubComp(uint16_t packetId) {
 }
 
 void AsyncMqttClient::loop() {
-#if defined(ESP8266)
-  // Other transports run callbacks on their own task; polling from here would race them
-  if (!_client.connected()) return;
+#if defined(ESP8266) && ASYNC_TCP_SSL_ENABLED
+  // Flushes TLS records between transport polls. ESP8266 only: other transports run
+  // callbacks on their own task. Plain connections need no help, and a no-op
+  // send() there would keep resetting the ack timeout.
+  if (!_secure || !_client.connected()) return;
   _client.send();
   _onPoll(&_client);
   // _onPoll can close the connection
