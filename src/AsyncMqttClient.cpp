@@ -723,6 +723,8 @@ void AsyncMqttClient::_sendAcks() {
     _client.add(fixedHeader, 2);
     _client.add(packetIdBytes, 2);
     _client.send();
+    // A failed write can tear the connection down, which empties the queue
+    if (!_connected) break;
 
     _toSendAcks.erase(_toSendAcks.begin() + i);
     _toSendAcks.shrink_to_fit();
