@@ -100,6 +100,8 @@ class AsyncMqttClient {
   bool _connectPacketNotEnoughSpace;
   bool _disconnectOnPoll;
   bool _tlsBadFingerprint;
+  // DISCONNECT sent or a partial frame queued: write nothing more until the transport closes
+  bool _disconnecting = false;
 #if defined(ESP8266)
   // Disconnect deferred while _onData() parses
   bool _parsing = false;

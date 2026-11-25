@@ -179,6 +179,7 @@ void AsyncMqttClient::_freeCurrentParsedPacket() {
 }
 
 void AsyncMqttClient::_clear() {
+  _disconnecting = false;
   _lastPingRequestTime = 0;
   _connected = false;
   _disconnectOnPoll = false;
@@ -511,7 +512,7 @@ void AsyncMqttClient::_onData(AsyncClient* client, uint8_t* data, size_t len) {
 }
 
 void AsyncMqttClient::_onPoll(AsyncClient* client) {
-  if (!_connected) return;
+  if (!_connected || _disconnecting) return;
 
   // if there is too much time the client has sent a ping request without a response, disconnect client to avoid half open connections
   if (_lastPingRequestTime != 0 && (millis() - _lastPingRequestTime) >= (_keepAlive * 1000 * 2)) {
@@ -701,7 +702,7 @@ bool AsyncMqttClient::_sendPing() {
 
 void AsyncMqttClient::_sendAcks() {
   // Nothing more goes out once a partial publish has stopped writes
-  if (!_connected) return;
+  if (!_connected || _disconnecting) return;
   uint8_t neededAckSpace = 2 + 2;
 
   SEMAPHORE_TAKE();
@@ -735,7 +736,7 @@ void AsyncMqttClient::_sendAcks() {
 }
 
 bool AsyncMqttClient::_sendDisconnect() {
-  if (!_connected) return true;
+  if (!_connected || _disconnecting) return true;
 
   const uint8_t neededSpace = 2;
 
@@ -752,9 +753,9 @@ bool AsyncMqttClient::_sendDisconnect() {
   _client.add(fixedHeader, 2);
   _client.send();
 #if defined(ESP8266)
-  // Graceful: the transport sends TLS records still buffered before it closes;
-  // nothing more goes out after DISCONNECT
-  _connected = false;
+  // Graceful: the transport sends TLS records still buffered before it closes.
+  // Stay connected until it does, but nothing more goes out after DISCONNECT.
+  _disconnecting = true;
   _client.close(false);
 #else
   _client.close(true);
@@ -821,7 +822,7 @@ void AsyncMqttClient::disconnect(bool force) {
 }
 
 uint16_t AsyncMqttClient::subscribe(const char* topic, uint8_t qos) {
-  if (!_connected) return 0;
+  if (!_connected || _disconnecting) return 0;
 
   char fixedHeader[5];
   fixedHeader[0] = AsyncMqttClientInternals::PacketType.SUBSCRIBE;
@@ -866,7 +867,7 @@ uint16_t AsyncMqttClient::subscribe(const char* topic, uint8_t qos) {
 }
 
 uint16_t AsyncMqttClient::unsubscribe(const char* topic) {
-  if (!_connected) return 0;
+  if (!_connected || _disconnecting) return 0;
 
   char fixedHeader[5];
   fixedHeader[0] = AsyncMqttClientInternals::PacketType.UNSUBSCRIBE;
@@ -906,7 +907,7 @@ uint16_t AsyncMqttClient::unsubscribe(const char* topic) {
 }
 
 uint16_t AsyncMqttClient::publish(const char* topic, uint8_t qos, bool retain, const char* payload, size_t length, bool dup, uint16_t message_id) {
-  if (!_connected) return 0;
+  if (!_connected || _disconnecting) return 0;
 
   char fixedHeader[5];
   fixedHeader[0] = AsyncMqttClientInternals::PacketType.PUBLISH;
@@ -982,7 +983,7 @@ uint16_t AsyncMqttClient::publish(const char* topic, uint8_t qos, bool retain, c
     // A partly queued packet corrupts the stream: stop writing and close
     // from the next poll, as this may run inside a message callback
     if (added != 0) {
-      _connected = false;
+      _disconnecting = true;
       _client.close();
     }
     SEMAPHORE_GIVE();
