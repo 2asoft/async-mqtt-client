@@ -759,8 +759,9 @@ bool AsyncMqttClient::_sendDisconnect() {
 
   _client.add(fixedHeader, 2);
   _client.send();
-  // A failed write already tore the connection down (onDisconnect ran)
-  if (!_connected) { SEMAPHORE_GIVE(); return true; }
+  // A failed write already tore the connection down; while parsing, onDisconnect is
+  // deferred, so check the transport too
+  if (!_connected || _client.disconnected()) { SEMAPHORE_GIVE(); return true; }
 #if defined(ESP8266)
   // Graceful: the transport sends TLS records still buffered before it closes.
   // Stay connected until it does, but nothing more goes out after DISCONNECT.
