@@ -517,8 +517,10 @@ void AsyncMqttClient::_onData(AsyncClient* client, uint8_t* data, size_t len) {
 void AsyncMqttClient::_onPoll(AsyncClient* client) {
   if (!_connected || _disconnecting) return;
 
+  if (_keepAlive == 0) {
+    // Keepalive off (MQTT 3.1.1, 3.1.2.10): no pings and no ping timeout
   // if there is too much time the client has sent a ping request without a response, disconnect client to avoid half open connections
-  if (_lastPingRequestTime != 0 && (millis() - _lastPingRequestTime) >= (_keepAlive * 1000 * 2)) {
+  } else if (_lastPingRequestTime != 0 && (millis() - _lastPingRequestTime) >= (_keepAlive * 1000 * 2)) {
     disconnect();
     return;
   // send ping to ensure the server will receive at least one message inside keepalive window
